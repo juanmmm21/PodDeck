@@ -1,3 +1,4 @@
+using PodDeck.Core.Alerts;
 using PodDeck.Core.Devices;
 
 namespace PodDeck.Core.Presentation;
@@ -60,6 +61,29 @@ public static class StatusFormatter
         ];
     }
 
+    public static string LowBatteryTitle(AirPodsStatus status)
+    {
+        ArgumentNullException.ThrowIfNull(status);
+        return $"{status.DisplayName}: low battery";
+    }
+
+    /// <summary>Cuerpo del aviso: todos los componentes que han bajado a la vez, en una sola frase.</summary>
+    public static string LowBatteryText(IReadOnlyList<LowBatteryAlert> alerts)
+    {
+        ArgumentNullException.ThrowIfNull(alerts);
+        if (alerts.Count == 0)
+        {
+            throw new ArgumentException("At least one alert is required.", nameof(alerts));
+        }
+
+        string parts = string.Join(", ", alerts.Select((alert, index) =>
+        {
+            string name = ComponentName(alert.Component);
+            return $"{(index == 0 ? name : name.ToLowerInvariant())} at {alert.Percent}%";
+        }));
+        return $"{parts}. Charge {(alerts.Count == 1 ? "it" : "them")} soon.";
+    }
+
     /// <summary>El número que se dibuja en el icono: la batería del auricular más bajo, o la de los cascos.</summary>
     public static int? IconPercent(AirPodsStatus? status) => status switch
     {
@@ -69,6 +93,15 @@ public static class StatusFormatter
     };
 
     private static string HeadphonesBattery(AirPodsStatus status) => Long(status.HeadphonesBattery);
+
+    private static string ComponentName(BatteryComponent component) => component switch
+    {
+        BatteryComponent.Left => "Left AirPod",
+        BatteryComponent.Right => "Right AirPod",
+        BatteryComponent.Case => "Case",
+        BatteryComponent.Headphones => "Battery",
+        _ => throw new ArgumentOutOfRangeException(nameof(component), component, "Unhandled battery component."),
+    };
 
     private static string Pod(PodStatus pod)
     {

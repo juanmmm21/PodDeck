@@ -1,3 +1,4 @@
+using PodDeck.Core.Alerts;
 using PodDeck.Core.Devices;
 using PodDeck.Core.Presentation;
 
@@ -91,6 +92,39 @@ public sealed class StatusFormatterTests
 
         BatteryGauge gauge = Assert.Single(StatusFormatter.PopupGauges(status));
         Assert.Equal(new BatteryGauge("Battery", new BatteryReading(40, false)), gauge);
+    }
+
+    [Fact]
+    public void LowBatteryTitle_NamesTheModel()
+    {
+        AirPodsStatus status = Earbuds(new(20, false), new(40, false), BatteryReading.Unavailable);
+
+        Assert.Equal("AirPods Pro 3: low battery", StatusFormatter.LowBatteryTitle(status));
+    }
+
+    [Fact]
+    public void LowBatteryText_SingleAlert()
+    {
+        Assert.Equal("Left AirPod at 20%. Charge it soon.",
+            StatusFormatter.LowBatteryText([new LowBatteryAlert(BatteryComponent.Left, 20)]));
+    }
+
+    [Fact]
+    public void LowBatteryText_SeveralAlerts_JoinedInOneSentence()
+    {
+        IReadOnlyList<LowBatteryAlert> alerts =
+        [
+            new LowBatteryAlert(BatteryComponent.Right, 10),
+            new LowBatteryAlert(BatteryComponent.Case, 20),
+        ];
+
+        Assert.Equal("Right AirPod at 10%, case at 20%. Charge them soon.", StatusFormatter.LowBatteryText(alerts));
+    }
+
+    [Fact]
+    public void LowBatteryText_NoAlerts_Throws()
+    {
+        Assert.Throws<ArgumentException>(() => StatusFormatter.LowBatteryText([]));
     }
 
     private static AirPodsStatus Earbuds(BatteryReading left, BatteryReading right, BatteryReading @case) => new(
