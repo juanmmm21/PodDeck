@@ -44,6 +44,12 @@ public sealed class AirPodsTracker
     /// <summary>Solo se dispara cuando cambia algo visible: batería, posición, modelo o disponibilidad.</summary>
     public event EventHandler<AirPodsStatus?>? CurrentChanged;
 
+    /// <summary>
+    /// Se dispara con cada anuncio aceptado de los AirPods seguidos, cambie algo o no. Lo usa quien
+    /// necesita confirmar un estado con varios anuncios seguidos, como la detección de oído.
+    /// </summary>
+    public event EventHandler<AirPodsStatus>? StatusReported;
+
     /// <summary>Product ids de los AirPods emparejados con el PC; vacío si no hay ninguno o no se sabe.</summary>
     public IReadOnlySet<ushort> PairedProducts => _pairedProducts;
 
@@ -88,6 +94,10 @@ public sealed class AirPodsTracker
         }
 
         Reselect(now);
+        if (_trackedProductId == status.ProductId)
+        {
+            StatusReported?.Invoke(this, status);
+        }
     }
 
     /// <summary>Olvida los AirPods que llevan demasiado sin anunciarse. Hay que llamarlo periódicamente.</summary>

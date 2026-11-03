@@ -187,6 +187,31 @@ public sealed class AirPodsTrackerTests
             () => new AirPodsTracker(_time, new TrackerOptions { SignalSmoothing = 0 }));
     }
 
+    [Fact]
+    public void Report_TrackedPairRepeatsStatus_RaisesReportedEveryTime()
+    {
+        var reported = new List<AirPodsStatus>();
+        _tracker.StatusReported += (_, status) => reported.Add(status);
+
+        _tracker.Report(Status(0x2027, left: 80), -60);
+        _tracker.Report(Status(0x2027, left: 80), -61);
+
+        Assert.Equal(2, reported.Count);
+        Assert.Single(_changes);
+    }
+
+    [Fact]
+    public void Report_UntrackedPair_DoesNotRaiseReported()
+    {
+        var reported = new List<AirPodsStatus>();
+        _tracker.StatusReported += (_, status) => reported.Add(status);
+        _tracker.Report(Status(0x2027, left: 80), -50);
+
+        _tracker.Report(Status(0x2014, left: 30), -80);
+
+        Assert.Equal([Status(0x2027, left: 80)], reported);
+    }
+
     private static AirPodsStatus Status(ushort productId, int left) => new(
         AirPodsModels.FromProductId(productId),
         productId,
