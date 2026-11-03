@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/PodDeck.App/PodDeck.App.csproj" />
     <Project Path="src/PodDeck.Bluetooth/PodDeck.Bluetooth.csproj" />
     <Project Path="src/PodDeck.Core/PodDeck.Core.csproj" />
     <Project Path="src/PodDeck.Probe/PodDeck.Probe.csproj" />
