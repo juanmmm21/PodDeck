@@ -1,0 +1,160 @@
+# PodDeck
+
+**AirPods battery and status in the Windows system tray: left pod, right pod and case, read straight from the Bluetooth advertisements AirPods broadcast.**
+
+## What it is
+
+Windows treats AirPods as a generic Bluetooth headset. You can listen to music and take calls, but there is no way to see how much battery each pod or the case has left. On an iPhone that information appears the moment you open the case.
+
+PodDeck brings that information to Windows. It is a small tray app that listens for the Bluetooth Low Energy "proximity pairing" message AirPods broadcast to everything nearby. It decodes the message and shows the battery of the lowest pod as a coloured tray icon. Hover over the icon to see every component; right-click it for the details. It needs no driver, no pairing step and no network access.
+
+## What makes it interesting
+
+- **A reverse-engineered protocol, tested against real hardware.** Apple does not document the proximity pairing format. The decoder is built from public reverse-engineering work and is pinned by unit tests, one of which replays a frame captured from real AirPods Pro 3.
+- **Identifying "your" AirPods without an identity.** AirPods rotate a random Bluetooth address every few minutes, so the address cannot tell one pair from another. PodDeck groups advertisements by model and follows the pair with the strongest smoothed signal. It only switches to another pair when that pair is clearly closer, so the icon does not flicker when someone else's AirPods are nearby.
+- **Platform code kept apart from the logic.** The protocol, the tracking logic and every text the UI shows live in a plain `net10.0` library that is tested on any OS. Only the BLE watcher and the tray UI depend on Windows.
+
+## How it works
+
+```
+AirPods ──BLE advertisement──▶ AppleAdvertisementScanner (WinRT watcher, Apple company id 0x004C)
+                                        │ raw manufacturer data
+                                        ▼
+                               ProximityPairingParser ──▶ AirPodsStatus (model, L/R/case, in-ear, lid)
+                                        │
+                                        ▼
+                               AirPodsTracker (nearest pair, hysteresis, expiry after 20 s of silence)
+                                        │ CurrentChanged
+                                        ▼
+                               Tray icon · tooltip · context menu
+```
+
+1. The WinRT `BluetoothLEAdvertisementWatcher` scans passively and keeps only advertisements with Apple's company id.
+2. The parser walks the Continuity TLVs inside that payload and decodes the clear-text part of message type `0x07`:
+
+   - the product id
+   - which pod is broadcasting
+   - battery in steps of 10 % for each pod and the case
+   - charging flags
+   - in-ear and in-case flags
+   - the lid state
+
+3. The tracker runs on the UI thread. It turns the stream of advertisements into a single stable state and raises an event only when something visible changes.
+4. The tray shows the result. The icon's number is the lowest pod's battery: green normally, red under 20 %, and grey when no AirPods are around. The tooltip and menu list every component.
+
+PodDeck recognises AirPods 1st–3rd generation, AirPods 4 (with and without ANC), AirPods Pro, AirPods Pro 2 (Lightning and USB-C), AirPods Pro 3 and AirPods Max. Other Apple audio products still show their battery, labelled with their raw product id.
+
+## Architecture
+
+```
+PodDeck/
+├── src/
+│   ├── PodDeck.Core/          # net10.0, no Windows dependency
+│   │   ├── Devices/           # AirPodsModel, BatteryReading, PodStatus, AirPodsStatus
+│   │   ├── Protocol/          # ProximityPairingParser: bytes -> AirPodsStatus
+│   │   ├── Tracking/          # AirPodsTracker + TrackerOptions: picks your pair, expires silent ones
+│   │   └── Presentation/      # StatusFormatter: tooltip, menu lines, icon number
+│   ├── PodDeck.Bluetooth/     # AppleAdvertisementScanner over the WinRT BLE watcher
+│   ├── PodDeck.App/           # WinForms tray app (PodDeck.exe), single instance
+│   └── PodDeck.Probe/         # console diagnostic that prints every advertisement
+├── tests/
+│   └── PodDeck.Core.Tests/    # xUnit tests for the parser, tracker and formatter
+├── Directory.Build.props      # nullable, warnings as errors, recommended analyzers
+└── PodDeck.slnx
+```
+
+## Requirements and installation
+
+- Windows 10 version 2004 (build 19041) or later, with a Bluetooth LE adapter.
+- [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) to run it, or the .NET 10 SDK to build it.
+
+Build a single-file `PodDeck.exe`:
+
+```powershell
+git clone https://github.com/juanmmm21/PodDeck.git
+cd PodDeck
+dotnet publish src/PodDeck.App -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o artifacts/publish
+```
+
+Every CI run on `main` also uploads the same `PodDeck.exe` as the `PodDeck-win-x64` artifact.
+
+## Usage
+
+Run `PodDeck.exe`. It has no window: look for the icon in the notification area. It may be hidden behind the `^` overflow arrow, and you can drag it onto the taskbar to keep it visible.
+
+- **Icon:** battery of the lowest pod (`F` means 100 %), or `–` when no AirPods are nearby.
+- **Tooltip:** `AirPods Pro 3 — L 80% · R 70% · Case 50%⚡`.
+- **Right-click:** model name, then one line per pod with its position (in ear / in case), the case with its lid state, and **Exit**.
+
+AirPods only broadcast while they are out of the case or while the lid is open. After 20 seconds of silence PodDeck reports "No AirPods nearby" until they broadcast again.
+
+### Diagnostic probe
+
+`PodDeck.Probe` prints every decoded advertisement with its signal strength and raw bytes. Run it when the battery looks wrong or a new model is not recognised:
+
+```text
+> dotnet run --project src/PodDeck.Probe -- --seconds 25
+Listening for AirPods advertisements for 25 s.
+13:44:34.448  -68 dBm  071901272002F78F110005847C976E73433A3A56E05D8769543790
+    AirPods Pro 3: L -- | R 70% in ear | case --
+13:44:50.636  -60 dBm  071901272002F78F110005847C976E73433A3A56E05D8769543790
+    AirPods Pro 3: L -- | R 70% in ear | case --
+```
+
+Add `--raw` to also print Apple advertisements that are not proximity pairing messages.
+
+## Proximity pairing message
+
+The bytes below are offsets into Apple's manufacturer data after the company id. Only the first ten bytes are in clear text; the rest is encrypted with a key shared by the paired devices.
+
+- `0`: message type, `0x07`.
+- `1`: length of the rest of the message, `0x19`.
+- `3–4`: product id, little-endian. For example `0x2027` is AirPods Pro 3 and `0x2014` is AirPods Pro 2.
+- `5`: status flags:
+  - `0x20`: the broadcasting pod is the left one.
+  - `0x02`: the broadcasting pod is in an ear.
+  - `0x08`: the other pod is in an ear.
+  - `0x40`: the broadcasting pod is in the case.
+  - `0x10`: one pod is in the case.
+  - `0x04`: both pods are in the case.
+- `6`: pod batteries. The low nibble belongs to the broadcasting pod and the high nibble to the other pod. Values `0–10` mean ×10 %, and `0xF` means the pod is not reporting.
+- `7`: charging and case. The high nibble holds charging flags (`0x1` broadcasting pod, `0x2` other pod, `0x4` case). The low nibble is the case battery, encoded like the pods.
+- `8`: lid. `0x08` set means closed; this is only meaningful while a pod is in the case.
+
+Sources: [furiousMAC/continuity](https://github.com/furiousMAC/continuity), [OpenPods](https://github.com/adolfintel/OpenPods), [AirPodsDesktop](https://github.com/SpriteOvO/AirPodsDesktop).
+
+## Programmatic use
+
+`PodDeck.Core` has no platform dependency. Use it to decode any captured payload:
+
+```csharp
+using PodDeck.Core.Devices;
+using PodDeck.Core.Protocol;
+
+byte[] payload = Convert.FromHexString("071901272002F78F110005847C976E73433A3A56E05D8769543790");
+if (ProximityPairingParser.TryParse(payload, out AirPodsStatus? status))
+{
+    Console.WriteLine($"{status.DisplayName}: right {status.Right.Battery}, in ear: {status.Right.IsInEar}");
+    // AirPods Pro 3: right 70%, in ear: True
+}
+```
+
+## Development
+
+```bash
+dotnet build PodDeck.slnx     # Windows projects also build on Linux/macOS thanks to EnableWindowsTargeting
+dotnet test PodDeck.slnx      # Core tests run on any OS
+```
+
+The build treats warnings as errors and enables the `latest-recommended` .NET analyzers plus code-style rules. The app and the probe only run on Windows.
+
+## Troubleshooting
+
+- **The icon stays grey with `–`.** Your AirPods are in a closed case or out of range. Open the lid or put one pod in your ear. If it stays grey, run the probe: if it prints nothing, Windows is not receiving the advertisements.
+- **"Bluetooth is off — retrying".** Turn Bluetooth on in Windows settings. PodDeck retries every 10 seconds and recovers on its own.
+- **A pod shows `--`.** That pod is not reporting, usually because it is inside the case while the other one is in use. AirPods only report a pod's battery through whichever pod is broadcasting.
+- **Someone else's AirPods show up.** Advertisements weaker than −90 dBm are ignored, and the closest pair wins. Two pairs of the same model at a similar distance can still be confused, because their addresses are random.
+
+## License
+
+[MIT](LICENSE) © 2026 Juan Martos Cuevas
