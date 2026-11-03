@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using PodDeck.Bluetooth;
 using PodDeck.Core.Devices;
+using PodDeck.Core.Playback;
 using PodDeck.Core.Presentation;
 using PodDeck.Core.Protocol;
 using PodDeck.Core.Tracking;
@@ -11,11 +12,13 @@ namespace PodDeck.App;
 /// <summary>
 /// La app entera vive en el icono de la bandeja: escucha los anuncios, decide qué AirPods son los
 /// tuyos y refresca icono, tooltip y menú cuando cambia algo. Al abrir el estuche saca la ventanita
-/// con la batería, que también se abre con un clic en el icono.
+/// con la batería, que también se abre con un clic en el icono. Al quitarse un auricular pausa lo que
+/// suene y lo reanuda al volver a ponérselo.
 /// </summary>
 internal sealed class TrayApplicationContext : ApplicationContext
 {
-    private static readonly TimeSpan HousekeepingInterval = TimeSpan.FromSeconds(2);
+    // Corto porque la tapa y los oídos se confirman con el paso del tiempo y la pausa debe notarse al momento.
+    private static readonly TimeSpan HousekeepingInterval = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan RestartDelay = TimeSpan.FromSeconds(10);
 
     private readonly SynchronizationContext _uiContext;
@@ -23,11 +26,19 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly PairedAirPodsWatcher _pairedWatcher = new();
     private readonly AirPodsTracker _tracker = new(TimeProvider.System);
     private readonly CaseLidWatcher _lidWatcher = new(TimeProvider.System);
+    private readonly EarDetector _earDetector = new(TimeProvider.System);
+    private readonly AutoPausePolicy _autoPause = new(TimeProvider.System);
+    private readonly MediaPlaybackController _media = new();
     private readonly CasePopupForm _popup = new();
     private readonly NotifyIcon _notifyIcon;
     private readonly ContextMenuStrip _menu = new();
     private readonly ToolStripMenuItem _titleItem = new() { Enabled = false };
     private readonly ToolStripSeparator _detailsSeparator = new();
+    private readonly ToolStripMenuItem _autoPauseItem = new("Pause media when an AirPod is removed")
+    {
+        CheckOnClick = true,
+        Checked = true,
+    };
     private readonly List<ToolStripMenuItem> _detailItems = [];
     private readonly System.Windows.Forms.Timer _housekeepingTimer = new();
     private Icon? _currentIcon;
@@ -41,10 +52,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         _menu.Items.Add(_titleItem);
         _menu.Items.Add(_detailsSeparator);
+        _menu.Items.Add(_autoPauseItem);
         _menu.Items.Add(new ToolStripMenuItem("Exit", image: null, (_, _) => ExitThread()));
 
         _notifyIcon = new NotifyIcon { ContextMenuStrip = _menu, Visible = true };
         _notifyIcon.MouseClick += OnNotifyIconClick;
+        _autoPauseItem.CheckedChanged += OnAutoPauseToggled;
 
         _scanner.AdvertisementReceived += OnAdvertisementReceived;
         _scanner.Stopped += OnScannerStopped;
@@ -53,6 +66,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             Render();
             FollowLid(status);
+            FollowEars(status);
         };
 
         _housekeepingTimer.Interval = (int)HousekeepingInterval.TotalMilliseconds;
@@ -76,6 +90,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _pairedWatcher.Dispose();
             _popup.Dispose();
             _notifyIcon.MouseClick -= OnNotifyIconClick;
+            _autoPauseItem.CheckedChanged -= OnAutoPauseToggled;
             _notifyIcon.Visible = false;
             _notifyIcon.Dispose();
             _menu.Dispose();
@@ -132,6 +147,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _tracker.ExpireStale();
         // El cierre de la tapa se confirma con el tiempo, aunque el tracker no cambie.
         FollowLid(_tracker.Current);
+        FollowEars(_tracker.Current);
         if (_scannerProblem is not null && DateTimeOffset.UtcNow >= _nextRestartAttempt)
         {
             TryStartScanner();
@@ -172,6 +188,65 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 }
 
                 break;
+        }
+    }
+
+    private void FollowEars(AirPodsStatus? status)
+    {
+        if (_earDetector.Update(status) is not EarChange change)
+        {
+            return;
+        }
+
+        switch (_autoPause.Decide(change))
+        {
+            case PlaybackAction.Pause:
+                _ = PauseMediaAsync();
+                break;
+            case PlaybackAction.Resume:
+                _ = ResumeMediaAsync();
+                break;
+            case PlaybackAction.None:
+                break;
+            default:
+                throw new InvalidOperationException("Unhandled playback action.");
+        }
+    }
+
+    // Las continuaciones vuelven al hilo de la interfaz, que es el único que toca la política.
+    private async Task PauseMediaAsync()
+    {
+        try
+        {
+            if (await _media.PauseAllPlayingAsync())
+            {
+                _autoPause.ConfirmPaused();
+            }
+        }
+        catch (Exception exception) when (exception is COMException or InvalidOperationException)
+        {
+            System.Diagnostics.Trace.TraceWarning($"Could not pause media: {exception.Message}");
+        }
+    }
+
+    private async Task ResumeMediaAsync()
+    {
+        try
+        {
+            await _media.ResumePausedAsync();
+        }
+        catch (Exception exception) when (exception is COMException or InvalidOperationException)
+        {
+            System.Diagnostics.Trace.TraceWarning($"Could not resume media: {exception.Message}");
+        }
+    }
+
+    private void OnAutoPauseToggled(object? sender, EventArgs e)
+    {
+        _autoPause.IsEnabled = _autoPauseItem.Checked;
+        if (!_autoPauseItem.Checked)
+        {
+            _media.Forget();
         }
     }
 
