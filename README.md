@@ -83,7 +83,9 @@ PodDeck/
 - Windows 10 version 2004 (build 19041) or later, with a Bluetooth LE adapter.
 - [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) to run it, or the .NET 10 SDK to build it.
 
-Build a single-file `PodDeck.exe`:
+Download `PodDeck.exe` from the [latest release](https://github.com/juanmmm21/PodDeck/releases/latest) and put it anywhere, for example `%LOCALAPPDATA%\Programs\PodDeck`. Each release also lists the file's SHA-256 in `PodDeck.exe.sha256`. It is not code-signed, so the first time you run it Windows SmartScreen may ask you to confirm with **More info → Run anyway**.
+
+Or build the same single-file `PodDeck.exe` yourself:
 
 ```powershell
 git clone https://github.com/juanmmm21/PodDeck.git
