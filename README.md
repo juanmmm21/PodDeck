@@ -6,7 +6,7 @@
 
 Windows treats AirPods as a generic Bluetooth headset. You can listen to music and take calls, but there is no way to see how much battery each pod or the case has left. On an iPhone that information appears the moment you open the case.
 
-PodDeck brings that information to Windows. It is a small tray app that listens for the Bluetooth Low Energy "proximity pairing" message AirPods broadcast to everything nearby. It decodes the message and shows the battery of the lowest pod as a coloured tray icon. Hover over the icon to see every component; right-click it for the details. It needs no driver, no pairing step and no network access.
+PodDeck brings that information to Windows. It is a small tray app that listens for the Bluetooth Low Energy "proximity pairing" message AirPods broadcast to everything nearby. It decodes the message and shows the battery of the lowest pod as a coloured tray icon. When you open the case, a small card with the battery of each pod and the case pops up above the tray, like the one on an iPhone. Hover over the icon to see every component; right-click it for the details. It needs no driver, no pairing step and no network access.
 
 ## What makes it interesting
 
@@ -28,6 +28,9 @@ PairedAirPodsWatcher ──paired ids──▶ AirPodsTracker (paired models onl
                                         │ CurrentChanged
                                         ▼
                                Tray icon · tooltip · context menu
+                                        │
+                                        ▼
+                               CaseLidWatcher ──Opened / Closed──▶ case popup
 ```
 
 1. The WinRT `BluetoothLEAdvertisementWatcher` scans passively and keeps only advertisements with Apple's company id.
@@ -43,6 +46,7 @@ PairedAirPodsWatcher ──paired ids──▶ AirPodsTracker (paired models onl
 3. A WinRT `DeviceWatcher` lists the Bluetooth services Apple devices registered when they were paired and hands their product ids to the tracker. Advertisements from any other model are dropped. With no Apple audio device paired, the tracker accepts any nearby pair.
 4. The tracker runs on the UI thread. It turns the stream of advertisements into a single stable state and raises an event only when something visible changes.
 5. The tray shows the result. The icon's number is the lowest pod's battery: green normally, red under 20 %, and grey when no AirPods are around. The tooltip and menu list every component.
+6. `CaseLidWatcher` turns the lid flag of each state into two events, opened and closed. The popup appears as soon as the lid opens. It only treats the lid as closed after a second with no "open" advertisement, or once the AirPods go silent, so one stray "closed" frame does not hide it.
 
 PodDeck recognises AirPods 1st–3rd generation, AirPods 4 (with and without ANC), AirPods Pro, AirPods Pro 2 (Lightning and USB-C), AirPods Pro 3 and AirPods Max. Other Apple audio products still show their battery, labelled with their raw product id.
 
@@ -55,13 +59,13 @@ PodDeck/
 │   │   ├── Devices/           # AirPodsModel, BatteryReading, PodStatus, AirPodsStatus
 │   │   ├── Protocol/          # ProximityPairingParser: bytes -> AirPodsStatus
 │   │   ├── Pairing/           # PairedDeviceId: product id from a paired device's instance id
-│   │   ├── Tracking/          # AirPodsTracker + TrackerOptions: picks your pair, expires silent ones
-│   │   └── Presentation/      # StatusFormatter: tooltip, menu lines, icon number
+│   │   ├── Tracking/          # AirPodsTracker: picks your pair; CaseLidWatcher: lid open/close events
+│   │   └── Presentation/      # StatusFormatter: tooltip, menu lines, icon number, popup gauges
 │   ├── PodDeck.Bluetooth/     # AppleAdvertisementScanner (BLE) and PairedAirPodsWatcher (paired devices)
 │   ├── PodDeck.App/           # WinForms tray app (PodDeck.exe), single instance
 │   └── PodDeck.Probe/         # console diagnostic that prints every advertisement
 ├── tests/
-│   └── PodDeck.Core.Tests/    # xUnit tests for the parser, tracker and formatter
+│   └── PodDeck.Core.Tests/    # xUnit tests for the parser, tracker, lid watcher and formatter
 ├── Directory.Build.props      # nullable, warnings as errors, recommended analyzers
 └── PodDeck.slnx
 ```
@@ -87,9 +91,14 @@ Run `PodDeck.exe`. It has no window: look for the icon in the notification area.
 
 - **Icon:** battery of the lowest pod (`F` means 100 %), or `–` when no AirPods are nearby.
 - **Tooltip:** `AirPods Pro 3 — L 80% · R 70% · Case 50%⚡`.
+- **Case popup:** opening the lid shows the card below for 8 seconds, without taking focus from the app you are using. Closing the lid or clicking the card hides it. Left-click the tray icon to bring it up at any time.
 - **Right-click:** model name, then one line per pod with its position (in ear / in case), the case with its lid state, and **Exit**.
 
 AirPods only broadcast while they are out of the case or while the lid is open. After 20 seconds of silence PodDeck reports "No AirPods nearby" until they broadcast again.
+
+![PodDeck case popup: AirPods Pro 3 with left 80 % and right 70 % charging, case at 15 %](docs/images/case-popup.png)
+
+Run `PodDeck.exe --preview-popup` to see the card with sample values, without Bluetooth.
 
 ### Diagnostic probe
 
