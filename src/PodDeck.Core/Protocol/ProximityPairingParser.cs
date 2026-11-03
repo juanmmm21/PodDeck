@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Diagnostics.CodeAnalysis;
 using PodDeck.Core.Devices;
 
 namespace PodDeck.Core.Protocol;
@@ -41,7 +42,7 @@ public static class ProximityPairingParser
     /// Busca y decodifica un mensaje de proximidad dentro de los datos de fabricante de Apple
     /// (sin los dos bytes del company id). Devuelve false si no hay ninguno o está malformado.
     /// </summary>
-    public static bool TryParse(ReadOnlySpan<byte> appleManufacturerData, out AirPodsStatus? status)
+    public static bool TryParse(ReadOnlySpan<byte> appleManufacturerData, [NotNullWhen(true)] out AirPodsStatus? status)
     {
         status = null;
         // Apple encadena varios mensajes Continuity como TLV (tipo, longitud, valor) en el mismo anuncio.
@@ -66,7 +67,7 @@ public static class ProximityPairingParser
         return false;
     }
 
-    private static bool TryParseMessage(ReadOnlySpan<byte> message, out AirPodsStatus? status)
+    private static bool TryParseMessage(ReadOnlySpan<byte> message, [NotNullWhen(true)] out AirPodsStatus? status)
     {
         status = null;
         if (message.Length < ClearTextLength)

@@ -74,7 +74,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     // que es el único que toca el tracker.
     private void OnAdvertisementReceived(object? sender, AppleAdvertisement advertisement)
     {
-        if (ProximityPairingParser.TryParse(advertisement.Data.Span, out AirPodsStatus? status) && status is not null)
+        if (ProximityPairingParser.TryParse(advertisement.Data.Span, out AirPodsStatus? status))
         {
             short signal = advertisement.SignalStrengthDbm;
             _uiContext.Post(_ => _tracker.Report(status, signal), null);
