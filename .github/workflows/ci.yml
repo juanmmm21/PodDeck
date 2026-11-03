@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    # Windows porque la app y el escáner usan WinForms y WinRT; los tests de Core corren igual aquí.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Build
+        run: dotnet build PodDeck.slnx -c Release
+
+      - name: Test
+        run: dotnet test PodDeck.slnx -c Release --no-build
+
+      - name: Publish tray app
+        run: dotnet publish src/PodDeck.App -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o artifacts/publish
+
+      - name: Upload PodDeck.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: PodDeck-win-x64
+          path: artifacts/publish/PodDeck.exe
