@@ -1,0 +1,41 @@
+name: Release
+
+# Solo se lanza al subir una etiqueta vX.Y.Z a mano: publicar una versión es una decisión explícita.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Read version from tag
+        id: version
+        shell: bash
+        run: echo "number=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Test
+        run: dotnet test PodDeck.slnx -c Release
+
+      - name: Publish tray app
+        run: dotnet publish src/PodDeck.App -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:Version=${{ steps.version.outputs.number }} -o artifacts/publish
+
+      - name: Create GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd artifacts/publish
+          sha256sum PodDeck.exe > PodDeck.exe.sha256
+          gh release create "$GITHUB_REF_NAME" PodDeck.exe PodDeck.exe.sha256 \
+            --repo "$GITHUB_REPOSITORY" --title "PodDeck $GITHUB_REF_NAME" --generate-notes
