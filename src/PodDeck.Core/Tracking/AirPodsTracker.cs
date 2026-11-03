@@ -10,13 +10,16 @@ namespace PodDeck.Core.Tracking;
 /// <remarks>
 /// Los AirPods cambian de dirección Bluetooth aleatoria cada pocos minutos, así que la dirección no
 /// sirve para reconocerlos. Se agrupan por modelo y se elige el de mejor señal media, con margen
-/// para no saltar entre dos pares cercanos a cada anuncio.
+/// para no saltar entre dos pares cercanos a cada anuncio. Si se conocen los modelos emparejados con
+/// el PC (<see cref="SetPairedProducts"/>), solo se aceptan esos: los AirPods de otra persona solo
+/// se colarían si son del mismo modelo, porque lo demás del anuncio va cifrado.
 /// </remarks>
 public sealed class AirPodsTracker
 {
     private readonly TimeProvider _time;
     private readonly TrackerOptions _options;
     private readonly Dictionary<ushort, Candidate> _candidates = [];
+    private HashSet<ushort> _pairedProducts = [];
     private ushort? _trackedProductId;
 
     public AirPodsTracker(TimeProvider time, TrackerOptions? options = null)
@@ -41,10 +44,35 @@ public sealed class AirPodsTracker
     /// <summary>Solo se dispara cuando cambia algo visible: batería, posición, modelo o disponibilidad.</summary>
     public event EventHandler<AirPodsStatus?>? CurrentChanged;
 
+    /// <summary>Product ids de los AirPods emparejados con el PC; vacío si no hay ninguno o no se sabe.</summary>
+    public IReadOnlySet<ushort> PairedProducts => _pairedProducts;
+
+    /// <summary>
+    /// Restringe el seguimiento a estos modelos. Con un conjunto vacío se vuelve a aceptar cualquier
+    /// par cercano: sin AirPods emparejados es mejor enseñar algo que dejar el icono siempre gris.
+    /// </summary>
+    public void SetPairedProducts(IEnumerable<ushort> productIds)
+    {
+        ArgumentNullException.ThrowIfNull(productIds);
+        var next = new HashSet<ushort>(productIds);
+        if (next.SetEquals(_pairedProducts))
+        {
+            return;
+        }
+
+        _pairedProducts = next;
+        foreach (ushort productId in _candidates.Keys.Where(id => !IsAccepted(id)).ToList())
+        {
+            _candidates.Remove(productId);
+        }
+
+        Reselect(_time.GetUtcNow());
+    }
+
     public void Report(AirPodsStatus status, short signalDbm)
     {
         ArgumentNullException.ThrowIfNull(status);
-        if (signalDbm < _options.MinimumSignalDbm)
+        if (signalDbm < _options.MinimumSignalDbm || !IsAccepted(status.ProductId))
         {
             return;
         }
@@ -64,6 +92,8 @@ public sealed class AirPodsTracker
 
     /// <summary>Olvida los AirPods que llevan demasiado sin anunciarse. Hay que llamarlo periódicamente.</summary>
     public void ExpireStale() => Reselect(_time.GetUtcNow());
+
+    private bool IsAccepted(ushort productId) => _pairedProducts.Count == 0 || _pairedProducts.Contains(productId);
 
     private void Reselect(DateTimeOffset now)
     {

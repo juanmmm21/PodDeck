@@ -112,6 +112,75 @@ public sealed class AirPodsTrackerTests
     }
 
     [Fact]
+    public void Report_WithPairedProducts_IgnoresOtherModels()
+    {
+        _tracker.SetPairedProducts([0x2027]);
+
+        _tracker.Report(Status(0x200E, left: 30), -40);
+
+        Assert.Null(_tracker.Current);
+        Assert.Empty(_changes);
+    }
+
+    [Fact]
+    public void Report_WithPairedProducts_KeepsPairedModelEvenIfAnotherIsStronger()
+    {
+        _tracker.SetPairedProducts([0x2027]);
+
+        _tracker.Report(Status(0x2027, left: 80), -85);
+        _tracker.Report(Status(0x200E, left: 30), -40);
+
+        Assert.Equal((ushort)0x2027, _tracker.Current?.ProductId);
+        Assert.Single(_changes);
+    }
+
+    [Fact]
+    public void SetPairedProducts_DropsTrackedUnpairedModel()
+    {
+        _tracker.Report(Status(0x200E, left: 30), -40);
+        _tracker.Report(Status(0x2027, left: 80), -85);
+
+        _tracker.SetPairedProducts([0x2027]);
+
+        Assert.Equal((ushort)0x2027, _tracker.Current?.ProductId);
+        Assert.Equal(2, _changes.Count);
+    }
+
+    [Fact]
+    public void SetPairedProducts_PairedModelNotNearby_ClearsCurrent()
+    {
+        _tracker.Report(Status(0x200E, left: 30), -40);
+
+        _tracker.SetPairedProducts([0x2027]);
+
+        Assert.Null(_tracker.Current);
+        Assert.Null(_changes[^1]);
+    }
+
+    [Fact]
+    public void SetPairedProducts_Empty_AcceptsAnyModelAgain()
+    {
+        _tracker.SetPairedProducts([0x2027]);
+        _tracker.SetPairedProducts([]);
+
+        _tracker.Report(Status(0x200E, left: 30), -40);
+
+        Assert.Equal((ushort)0x200E, _tracker.Current?.ProductId);
+    }
+
+    [Fact]
+    public void SetPairedProducts_SameSet_DoesNotRaiseChanged()
+    {
+        _tracker.Report(Status(0x2027, left: 80), -60);
+
+        _tracker.SetPairedProducts([0x2027]);
+        _tracker.SetPairedProducts([0x2027, 0x2027]);
+
+        Assert.Single(_changes);
+        Assert.Equal(new HashSet<ushort> { 0x2027 }, _tracker.PairedProducts);
+    }
+
+    [Fact]
     public void Constructor_InvalidSmoothing_Throws()
     {
         Assert.Throws<ArgumentOutOfRangeException>(
