@@ -1,0 +1,14 @@
+<Project>
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <!-- Permite compilar los proyectos de Windows desde Linux/WSL (CI y desarrollo); solo se ejecutan en Windows. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Authors>juanmmm21</Authors>
+    <Copyright>Copyright (c) 2026 Juan Martos Cuevas</Copyright>
+  </PropertyGroup>
+</Project>
