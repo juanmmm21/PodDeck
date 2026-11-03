@@ -67,6 +67,32 @@ public sealed class StatusFormatterTests
         Assert.Equal(70, StatusFormatter.IconPercent(status));
     }
 
+    [Fact]
+    public void PopupGauges_Earbuds_ShowLeftRightAndCase()
+    {
+        AirPodsStatus status = Earbuds(new(80, true), new(null, false), new(100, false));
+
+        IReadOnlyList<BatteryGauge> gauges = StatusFormatter.PopupGauges(status);
+
+        Assert.Equal(["Left", "Right", "Case"], gauges.Select(gauge => gauge.Label));
+        Assert.Equal(["80%", "--", "100%"], gauges.Select(gauge => gauge.PercentText));
+        Assert.Equal([0.8, null, 1.0], gauges.Select(gauge => gauge.Fill));
+        Assert.True(gauges[0].Battery.IsCharging);
+    }
+
+    [Fact]
+    public void PopupGauges_Headphones_ShowSingleBattery()
+    {
+        AirPodsStatus status = Earbuds(new(null, false), new(40, false), BatteryReading.Unavailable) with
+        {
+            Model = AirPodsModel.AirPodsMaxUsbC,
+            ProductId = 0x201F,
+        };
+
+        BatteryGauge gauge = Assert.Single(StatusFormatter.PopupGauges(status));
+        Assert.Equal(new BatteryGauge("Battery", new BatteryReading(40, false)), gauge);
+    }
+
     private static AirPodsStatus Earbuds(BatteryReading left, BatteryReading right, BatteryReading @case) => new(
         AirPodsModel.AirPodsPro3,
         0x2027,

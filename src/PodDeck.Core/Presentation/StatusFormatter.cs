@@ -40,6 +40,26 @@ public static class StatusFormatter
         ];
     }
 
+    /// <summary>
+    /// Indicadores de la ventana que salta al abrir el estuche: izquierdo, derecho y estuche, o uno
+    /// solo para los cascos.
+    /// </summary>
+    public static IReadOnlyList<BatteryGauge> PopupGauges(AirPodsStatus status)
+    {
+        ArgumentNullException.ThrowIfNull(status);
+        if (status.Model.IsHeadphones())
+        {
+            return [new BatteryGauge("Battery", HeadphonesReading(status))];
+        }
+
+        return
+        [
+            new BatteryGauge("Left", status.Left.Battery),
+            new BatteryGauge("Right", status.Right.Battery),
+            new BatteryGauge("Case", status.Case),
+        ];
+    }
+
     /// <summary>El número que se dibuja en el icono: la batería del auricular más bajo, o la de los cascos.</summary>
     public static int? IconPercent(AirPodsStatus? status) => status switch
     {
