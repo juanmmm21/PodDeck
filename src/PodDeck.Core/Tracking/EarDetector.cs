@@ -9,57 +9,54 @@ public readonly record struct EarChange(int Before, int After)
 }
 
 /// <summary>
-/// Convierte los estados del tracker en sucesos «se ha quitado / puesto un auricular». No es seguro
-/// entre hilos, igual que <see cref="AirPodsTracker"/>.
+/// Convierte los anuncios de los AirPods seguidos en sucesos «se ha quitado / puesto un auricular».
+/// No es seguro entre hilos, igual que <see cref="AirPodsTracker"/>.
 /// </summary>
 /// <remarks>
 /// Cuenta los auriculares en la oreja en vez de mirar cada uno, porque al quitarse uno el que emite
-/// puede pasar a ser el otro y cambia qué lado viene en qué nibble. Un cambio solo se da por bueno
-/// cuando se mantiene <see cref="SettleTime"/>, para que un anuncio suelto no pause la música. Al
-/// desaparecer los AirPods o cambiar de modelo se olvida la referencia: no hay nada que comparar.
+/// puede pasar a ser el otro y cambia qué lado viene en qué nibble. Un cambio se da por bueno cuando
+/// lo repiten <see cref="ConfirmationFrames"/> anuncios seguidos: así un anuncio suelto no pausa la
+/// música, pero tampoco se espera un tiempo fijo (la primera versión esperaba medio segundo más el
+/// tic del temporizador y se notaba lenta). Los dos auriculares emiten por turnos, así que el
+/// segundo anuncio suele venir del otro y sirve de contraste.
 /// </remarks>
 public sealed class EarDetector
 {
-    public static readonly TimeSpan DefaultSettleTime = TimeSpan.FromMilliseconds(500);
+    public const int DefaultConfirmationFrames = 2;
 
-    private readonly TimeProvider _time;
     private ushort? _productId;
     private int? _pendingCount;
-    private DateTimeOffset _pendingSince;
+    private int _pendingFrames;
 
-    public EarDetector(TimeProvider time, TimeSpan? settleTime = null)
+    public EarDetector(int confirmationFrames = DefaultConfirmationFrames)
     {
-        ArgumentNullException.ThrowIfNull(time);
-        _time = time;
-        SettleTime = settleTime ?? DefaultSettleTime;
-        if (SettleTime < TimeSpan.Zero)
+        if (confirmationFrames < 1)
         {
-            throw new ArgumentOutOfRangeException(nameof(settleTime), settleTime, "SettleTime cannot be negative.");
+            throw new ArgumentOutOfRangeException(nameof(confirmationFrames), confirmationFrames, "ConfirmationFrames must be at least 1.");
         }
+
+        ConfirmationFrames = confirmationFrames;
     }
 
-    public TimeSpan SettleTime { get; }
+    public int ConfirmationFrames { get; }
 
-    /// <summary>Auriculares puestos según el último cambio confirmado, o null si no hay AirPods.</summary>
+    /// <summary>Auriculares puestos según el último cambio confirmado, o null si no hay referencia.</summary>
     public int? InEarCount { get; private set; }
 
-    /// <summary>
-    /// Hay que llamarlo con cada estado nuevo del tracker y también periódicamente, porque el cambio
-    /// se confirma con el paso del tiempo aunque no llegue ningún estado distinto.
-    /// </summary>
-    public EarChange? Update(AirPodsStatus? current)
+    /// <summary>Hay que llamarlo con cada anuncio de los AirPods seguidos, aunque no cambie nada.</summary>
+    public EarChange? Observe(AirPodsStatus status)
     {
-        if (current is null || current.ProductId != _productId)
+        ArgumentNullException.ThrowIfNull(status);
+        int count = CountInEar(status);
+        if (status.ProductId != _productId || InEarCount is not int confirmed)
         {
-            _productId = current?.ProductId;
-            InEarCount = current is null ? null : CountInEar(current);
+            _productId = status.ProductId;
+            InEarCount = count;
             _pendingCount = null;
             return null;
         }
 
-        int count = CountInEar(current);
-        DateTimeOffset now = _time.GetUtcNow();
-        if (count == InEarCount)
+        if (count == confirmed)
         {
             _pendingCount = null;
             return null;
@@ -68,18 +65,25 @@ public sealed class EarDetector
         if (count != _pendingCount)
         {
             _pendingCount = count;
-            _pendingSince = now;
+            _pendingFrames = 0;
         }
 
-        if (now - _pendingSince < SettleTime)
+        if (++_pendingFrames < ConfirmationFrames)
         {
             return null;
         }
 
-        var change = new EarChange(InEarCount ?? 0, count);
         InEarCount = count;
         _pendingCount = null;
-        return change;
+        return new EarChange(confirmed, count);
+    }
+
+    /// <summary>Los AirPods han desaparecido: no hay nada con lo que comparar el próximo anuncio.</summary>
+    public void Reset()
+    {
+        _productId = null;
+        InEarCount = null;
+        _pendingCount = null;
     }
 
     private static int CountInEar(AirPodsStatus status) =>

@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Time.Testing;
 using PodDeck.Core.Devices;
 using PodDeck.Core.Tracking;
 
@@ -6,31 +5,22 @@ namespace PodDeck.Core.Tests.Tracking;
 
 public sealed class EarDetectorTests
 {
-    private static readonly TimeSpan Settle = TimeSpan.FromMilliseconds(500);
-
-    private readonly FakeTimeProvider _time = new();
-    private readonly EarDetector _detector;
-
-    public EarDetectorTests()
-    {
-        _detector = new EarDetector(_time, Settle);
-    }
+    private readonly EarDetector _detector = new(confirmationFrames: 2);
 
     [Fact]
-    public void Update_FirstStatus_SetsBaselineWithoutChange()
+    public void Observe_FirstStatus_SetsBaselineWithoutChange()
     {
-        Assert.Null(_detector.Update(Status(leftInEar: true, rightInEar: true)));
+        Assert.Null(_detector.Observe(Status(leftInEar: true, rightInEar: true)));
         Assert.Equal(2, _detector.InEarCount);
     }
 
     [Fact]
-    public void Update_PodRemovedAndSettled_ReportsRemoval()
+    public void Observe_RemovalSeenTwice_ReportsRemoval()
     {
-        _detector.Update(Status(leftInEar: true, rightInEar: true));
+        _detector.Observe(Status(leftInEar: true, rightInEar: true));
 
-        Assert.Null(_detector.Update(Status(leftInEar: false, rightInEar: true)));
-        _time.Advance(Settle);
-        EarChange? change = _detector.Update(Status(leftInEar: false, rightInEar: true));
+        Assert.Null(_detector.Observe(Status(leftInEar: false, rightInEar: true)));
+        EarChange? change = _detector.Observe(Status(leftInEar: false, rightInEar: true));
 
         Assert.Equal(new EarChange(2, 1), change);
         Assert.True(change!.Value.IsRemoval);
@@ -38,92 +28,90 @@ public sealed class EarDetectorTests
     }
 
     [Fact]
-    public void Update_ChangeReportedOnlyOnce()
+    public void Observe_LastPodRemoved_ReportsRemovalToZero()
     {
-        _detector.Update(Status(leftInEar: true, rightInEar: true));
-        _detector.Update(Status(leftInEar: false, rightInEar: true));
-        _time.Advance(Settle);
-        _detector.Update(Status(leftInEar: false, rightInEar: true));
-        _time.Advance(Settle);
+        _detector.Observe(Status(leftInEar: false, rightInEar: true));
+        _detector.Observe(Status(leftInEar: false, rightInEar: false));
 
-        Assert.Null(_detector.Update(Status(leftInEar: false, rightInEar: true)));
+        Assert.Equal(new EarChange(1, 0), _detector.Observe(Status(leftInEar: false, rightInEar: false)));
     }
 
     [Fact]
-    public void Update_BriefFlicker_IsIgnored()
+    public void Observe_ChangeReportedOnlyOnce()
     {
-        _detector.Update(Status(leftInEar: true, rightInEar: true));
-        _detector.Update(Status(leftInEar: false, rightInEar: true));
-        _time.Advance(TimeSpan.FromMilliseconds(200));
-        _detector.Update(Status(leftInEar: true, rightInEar: true));
-        _time.Advance(Settle);
+        _detector.Observe(Status(leftInEar: true, rightInEar: true));
+        _detector.Observe(Status(leftInEar: false, rightInEar: true));
+        _detector.Observe(Status(leftInEar: false, rightInEar: true));
 
-        Assert.Null(_detector.Update(Status(leftInEar: true, rightInEar: true)));
+        Assert.Null(_detector.Observe(Status(leftInEar: false, rightInEar: true)));
+    }
+
+    [Fact]
+    public void Observe_SingleStrayFrame_IsIgnored()
+    {
+        _detector.Observe(Status(leftInEar: true, rightInEar: true));
+        _detector.Observe(Status(leftInEar: false, rightInEar: true));
+
+        Assert.Null(_detector.Observe(Status(leftInEar: true, rightInEar: true)));
+        Assert.Null(_detector.Observe(Status(leftInEar: false, rightInEar: true)));
         Assert.Equal(2, _detector.InEarCount);
     }
 
     [Fact]
-    public void Update_PodPutBack_ReportsInsertion()
+    public void Observe_PodPutBack_ReportsInsertion()
     {
-        _detector.Update(Status(leftInEar: false, rightInEar: true));
-        _detector.Update(Status(leftInEar: true, rightInEar: true));
-        _time.Advance(Settle);
+        _detector.Observe(Status(leftInEar: false, rightInEar: true));
+        _detector.Observe(Status(leftInEar: true, rightInEar: true));
 
-        EarChange? change = _detector.Update(Status(leftInEar: true, rightInEar: true));
+        EarChange? change = _detector.Observe(Status(leftInEar: true, rightInEar: true));
 
         Assert.Equal(new EarChange(1, 2), change);
         Assert.False(change!.Value.IsRemoval);
     }
 
     [Fact]
-    public void Update_SwappedSidesSameCount_ReportsNothing()
+    public void Observe_SwappedSidesSameCount_ReportsNothing()
     {
-        _detector.Update(Status(leftInEar: true, rightInEar: false));
-        _time.Advance(Settle);
+        _detector.Observe(Status(leftInEar: true, rightInEar: false));
 
-        Assert.Null(_detector.Update(Status(leftInEar: false, rightInEar: true)));
+        Assert.Null(_detector.Observe(Status(leftInEar: false, rightInEar: true)));
+        Assert.Null(_detector.Observe(Status(leftInEar: false, rightInEar: true)));
     }
 
     [Fact]
-    public void Update_PendingCountChanges_RestartsSettleTime()
+    public void Observe_PendingCountChanges_StartsCountingAgain()
     {
-        _detector.Update(Status(leftInEar: true, rightInEar: true));
-        _detector.Update(Status(leftInEar: false, rightInEar: true));
-        _time.Advance(TimeSpan.FromMilliseconds(400));
-        _detector.Update(Status(leftInEar: false, rightInEar: false));
-        _time.Advance(TimeSpan.FromMilliseconds(400));
+        _detector.Observe(Status(leftInEar: true, rightInEar: true));
+        _detector.Observe(Status(leftInEar: false, rightInEar: true));
 
-        Assert.Null(_detector.Update(Status(leftInEar: false, rightInEar: false)));
-        _time.Advance(TimeSpan.FromMilliseconds(100));
-        Assert.Equal(new EarChange(2, 0), _detector.Update(Status(leftInEar: false, rightInEar: false)));
+        Assert.Null(_detector.Observe(Status(leftInEar: false, rightInEar: false)));
+        Assert.Equal(new EarChange(2, 0), _detector.Observe(Status(leftInEar: false, rightInEar: false)));
     }
 
     [Fact]
-    public void Update_AirPodsGone_ForgetsBaseline()
+    public void Reset_ForgetsBaseline()
     {
-        _detector.Update(Status(leftInEar: true, rightInEar: true));
-        _detector.Update(null);
+        _detector.Observe(Status(leftInEar: true, rightInEar: true));
+        _detector.Reset();
         Assert.Null(_detector.InEarCount);
 
-        Assert.Null(_detector.Update(Status(leftInEar: false, rightInEar: false)));
-        _time.Advance(Settle);
-        Assert.Null(_detector.Update(Status(leftInEar: false, rightInEar: false)));
+        Assert.Null(_detector.Observe(Status(leftInEar: false, rightInEar: false)));
+        Assert.Null(_detector.Observe(Status(leftInEar: false, rightInEar: false)));
     }
 
     [Fact]
-    public void Update_DifferentModel_ResetsBaseline()
+    public void Observe_DifferentModel_ResetsBaseline()
     {
-        _detector.Update(Status(leftInEar: true, rightInEar: true));
-        _time.Advance(Settle);
+        _detector.Observe(Status(leftInEar: true, rightInEar: true));
 
-        Assert.Null(_detector.Update(Status(leftInEar: false, rightInEar: false, productId: 0x2014)));
+        Assert.Null(_detector.Observe(Status(leftInEar: false, rightInEar: false, productId: 0x2014)));
         Assert.Equal(0, _detector.InEarCount);
     }
 
     [Fact]
-    public void Constructor_NegativeSettleTime_Throws()
+    public void Constructor_ZeroFrames_Throws()
     {
-        Assert.Throws<ArgumentOutOfRangeException>(() => new EarDetector(_time, TimeSpan.FromSeconds(-1)));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new EarDetector(confirmationFrames: 0));
     }
 
     private static AirPodsStatus Status(bool leftInEar, bool rightInEar, ushort productId = 0x2027) => new(
