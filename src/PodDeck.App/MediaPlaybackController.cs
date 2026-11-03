@@ -11,21 +11,34 @@ internal sealed class MediaPlaybackController
     private readonly List<string> _pausedApps = [];
     private GlobalSystemMediaTransportControlsSessionManager? _manager;
 
-    /// <summary>Pausa todas las sesiones que están sonando. Devuelve true si ha pausado alguna.</summary>
-    public async Task<bool> PauseAllPlayingAsync()
+    /// <summary>
+    /// Pausa todas las sesiones que están sonando y devuelve true si ha pausado alguna. Con
+    /// <paramref name="keepPrevious"/> se suman a las de la pausa anterior, que siguen pendientes de
+    /// reanudar; sin él, se empieza de cero.
+    /// </summary>
+    public async Task<bool> PauseAllPlayingAsync(bool keepPrevious)
     {
-        _pausedApps.Clear();
+        if (!keepPrevious)
+        {
+            _pausedApps.Clear();
+        }
+
+        bool pausedAny = false;
         GlobalSystemMediaTransportControlsSessionManager manager = await GetManagerAsync();
         foreach (GlobalSystemMediaTransportControlsSession session in manager.GetSessions())
         {
             if (session.GetPlaybackInfo()?.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing
                 && await session.TryPauseAsync())
             {
-                _pausedApps.Add(session.SourceAppUserModelId);
+                pausedAny = true;
+                if (!_pausedApps.Contains(session.SourceAppUserModelId, StringComparer.OrdinalIgnoreCase))
+                {
+                    _pausedApps.Add(session.SourceAppUserModelId);
+                }
             }
         }
 
-        return _pausedApps.Count > 0;
+        return pausedAny;
     }
 
     /// <summary>

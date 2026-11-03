@@ -17,7 +17,7 @@ namespace PodDeck.App;
 /// </summary>
 internal sealed class TrayApplicationContext : ApplicationContext
 {
-    // Corto porque la tapa y los oídos se confirman con el paso del tiempo y la pausa debe notarse al momento.
+    // Corto porque el cierre de la tapa se confirma con el paso del tiempo y la ventana debe irse al momento.
     private static readonly TimeSpan HousekeepingInterval = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan RestartDelay = TimeSpan.FromSeconds(10);
 
@@ -26,7 +26,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly PairedAirPodsWatcher _pairedWatcher = new();
     private readonly AirPodsTracker _tracker = new(TimeProvider.System);
     private readonly CaseLidWatcher _lidWatcher = new(TimeProvider.System);
-    private readonly EarDetector _earDetector = new(TimeProvider.System);
+    private readonly EarDetector _earDetector = new();
     private readonly AutoPausePolicy _autoPause = new(TimeProvider.System);
     private readonly MediaPlaybackController _media = new();
     private readonly CasePopupForm _popup = new();
@@ -66,8 +66,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             Render();
             FollowLid(status);
-            FollowEars(status);
+            if (status is null)
+            {
+                _earDetector.Reset();
+            }
         };
+        // La detección de oído va con cada anuncio y no con cada cambio: confirmar con dos anuncios
+        // seguidos es más rápido que esperar a un temporizador.
+        _tracker.StatusReported += (_, status) => FollowEars(status);
 
         _housekeepingTimer.Interval = (int)HousekeepingInterval.TotalMilliseconds;
         _housekeepingTimer.Tick += (_, _) => Housekeep();
@@ -147,7 +153,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _tracker.ExpireStale();
         // El cierre de la tapa se confirma con el tiempo, aunque el tracker no cambie.
         FollowLid(_tracker.Current);
-        FollowEars(_tracker.Current);
         if (_scannerProblem is not null && DateTimeOffset.UtcNow >= _nextRestartAttempt)
         {
             TryStartScanner();
@@ -191,17 +196,19 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
     }
 
-    private void FollowEars(AirPodsStatus? status)
+    private void FollowEars(AirPodsStatus status)
     {
-        if (_earDetector.Update(status) is not EarChange change)
+        if (_earDetector.Observe(status) is not EarChange change)
         {
             return;
         }
 
+        // Se mira antes de decidir: si ya había una pausa pendiente, lo que se pause ahora se suma a ella.
+        bool keepPrevious = _autoPause.HasPendingResume;
         switch (_autoPause.Decide(change))
         {
             case PlaybackAction.Pause:
-                _ = PauseMediaAsync();
+                _ = PauseMediaAsync(keepPrevious);
                 break;
             case PlaybackAction.Resume:
                 _ = ResumeMediaAsync();
@@ -214,11 +221,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
     }
 
     // Las continuaciones vuelven al hilo de la interfaz, que es el único que toca la política.
-    private async Task PauseMediaAsync()
+    private async Task PauseMediaAsync(bool keepPrevious)
     {
         try
         {
-            if (await _media.PauseAllPlayingAsync())
+            if (await _media.PauseAllPlayingAsync(keepPrevious))
             {
                 _autoPause.ConfirmPaused();
             }
