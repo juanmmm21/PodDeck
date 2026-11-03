@@ -4,7 +4,13 @@ using PodDeck.Core.Devices;
 using PodDeck.Core.Protocol;
 
 // Herramienta de diagnóstico: imprime cada anuncio de AirPods que llega. Con --raw imprime también
-// los anuncios de Apple que no son de proximidad, para investigar formatos nuevos.
+// los anuncios de Apple que no son de proximidad, para investigar formatos nuevos. Con --paired solo
+// lista los modelos de Apple emparejados con el PC, que es lo que usa la app para filtrar.
+if (args.Contains("--paired"))
+{
+    return await ListPairedAsync();
+}
+
 bool includeRaw = args.Contains("--raw");
 TimeSpan? duration = ParseDuration(args);
 
@@ -67,6 +73,34 @@ catch (OperationCanceledException)
 
 scanner.Stop();
 return 0;
+
+static async Task<int> ListPairedAsync()
+{
+    using var watcher = new PairedAirPodsWatcher();
+    var firstResult = new TaskCompletionSource<IReadOnlySet<ushort>>(TaskCreationOptions.RunContinuationsAsynchronously);
+    watcher.PairedProductsChanged += (_, products) => firstResult.TrySetResult(products);
+    watcher.Start();
+
+    Task completed = await Task.WhenAny(firstResult.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+    if (completed != firstResult.Task)
+    {
+        Console.Error.WriteLine("Device enumeration did not finish within 10 s.");
+        return 1;
+    }
+
+    IReadOnlySet<ushort> paired = await firstResult.Task;
+    if (paired.Count == 0)
+    {
+        Console.WriteLine("No paired Apple audio devices.");
+    }
+
+    foreach (ushort productId in paired.Order())
+    {
+        Console.WriteLine($"0x{productId:X4}  {AirPodsModels.FromProductId(productId).DisplayName()}");
+    }
+
+    return 0;
+}
 
 static string Describe(AirPodsStatus status) =>
     $"{status.DisplayName}: L {Pod(status.Left)} | R {Pod(status.Right)} | case {status.Case}"
