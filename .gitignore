@@ -1,0 +1,20 @@
+# Salida de compilación de .NET
+bin/
+obj/
+artifacts/
+publish/
+TestResults/
+*.binlog
+
+# IDEs
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# Notas internas de los agentes (viven en el vault de Obsidian)
+AGENTS.md
+CLAUDE.md
+PROGRESS.md
+START_HERE.md
