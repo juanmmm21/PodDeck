@@ -19,7 +19,9 @@ public static class ProximityPairingParser
     public const ushort AppleCompanyId = 0x004C;
 
     private const byte ProximityPairingType = 0x07;
-    private const int ClearTextLength = 10;
+    // Los AirPods siempre anuncian 25 bytes de valor. Con el mismo tipo 0x07 llegan otros mensajes
+    // de Apple más cortos (longitud 0x11, capturados el 2026-11-03) que no siguen este formato.
+    private const int AirPodsPayloadLength = 0x19;
 
     private const int ProductIdOffset = 3;
     private const int StatusOffset = 5;
@@ -56,7 +58,7 @@ public static class ProximityPairingParser
                 return false;
             }
 
-            if (type == ProximityPairingType)
+            if (type == ProximityPairingType && length == AirPodsPayloadLength)
             {
                 return TryParseMessage(remaining[..(2 + length)], out status);
             }
@@ -70,11 +72,6 @@ public static class ProximityPairingParser
     private static bool TryParseMessage(ReadOnlySpan<byte> message, [NotNullWhen(true)] out AirPodsStatus? status)
     {
         status = null;
-        if (message.Length < ClearTextLength)
-        {
-            return false;
-        }
-
         ushort productId = BinaryPrimitives.ReadUInt16LittleEndian(message[ProductIdOffset..]);
         byte flags = message[StatusOffset];
         byte pods = message[PodBatteriesOffset];

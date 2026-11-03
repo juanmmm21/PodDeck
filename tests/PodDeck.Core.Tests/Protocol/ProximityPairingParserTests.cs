@@ -24,6 +24,47 @@ public sealed class ProximityPairingParserTests
         Assert.Equal(70, status.LowestPodPercent);
     }
 
+    // Capturas del 2026-11-03 con Juan abriendo y cerrando el estuche con los dos auriculares dentro
+    // (izquierdo 80 %, derecho 70 %, cargando; estuche 40 %). Cada auricular emite por turnos.
+    private const string RealLidOpenFromLeftPod = "07190127207578B432000049E637BE0806B28957545C2C68AA59DB";
+    private const string RealLidOpenFromRightPod = "07190127201587B4310000C5277731E7C19ECDFD257624834C2192";
+    private const string RealLidClosedFromLeftPod = "07190127207578B43B0004402D7C63B2C4D8E6395BF5FF48EEAD80";
+    private const string RealLidClosedFromRightPod = "07190127201587B439000435CB7640B1BE9A4282D2ED5D3EE3589E";
+
+    // Otro mensaje de Apple con tipo 0x07 pero 17 bytes, captado a la vez: no son AirPods.
+    private const string RealShortType7Message = "071106D944AA7FFF7E4E596F5233C3D85EC33A";
+
+    [Theory]
+    [InlineData(RealLidOpenFromLeftPod)]
+    [InlineData(RealLidOpenFromRightPod)]
+    public void TryParse_RealCaptureLidOpen_BothPodsChargingInOpenCase(string hex)
+    {
+        AirPodsStatus status = Parse(hex);
+
+        Assert.Equal(new PodStatus(new BatteryReading(80, true), IsInEar: false, IsInCase: true), status.Left);
+        Assert.Equal(new PodStatus(new BatteryReading(70, true), IsInEar: false, IsInCase: true), status.Right);
+        Assert.Equal(new BatteryReading(40, false), status.Case);
+        Assert.True(status.IsLidOpen);
+    }
+
+    [Theory]
+    [InlineData(RealLidClosedFromLeftPod)]
+    [InlineData(RealLidClosedFromRightPod)]
+    public void TryParse_RealCaptureLidClosed_ReportsLidClosed(string hex)
+    {
+        AirPodsStatus status = Parse(hex);
+
+        Assert.True(status.Left.IsInCase);
+        Assert.True(status.Right.IsInCase);
+        Assert.False(status.IsLidOpen);
+    }
+
+    [Fact]
+    public void TryParse_RealShortType7Message_IsNotAirPods()
+    {
+        Assert.False(ProximityPairingParser.TryParse(Convert.FromHexString(RealShortType7Message), out _));
+    }
+
     [Fact]
     public void TryParse_PrimaryIsLeft_MapsLowNibbleToLeftPod()
     {
