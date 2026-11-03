@@ -11,7 +11,7 @@ PodDeck brings that information to Windows. It is a small tray app that listens 
 ## What makes it interesting
 
 - **A reverse-engineered protocol, tested against real hardware.** Apple does not document the proximity pairing format. The decoder is built from public reverse-engineering work and is pinned by unit tests, one of which replays a frame captured from real AirPods Pro 3.
-- **Identifying "your" AirPods without an identity.** AirPods rotate a random Bluetooth address every few minutes, so the address cannot tell one pair from another. PodDeck groups advertisements by model and follows the pair with the strongest smoothed signal. It only switches to another pair when that pair is clearly closer, so the icon does not flicker when someone else's AirPods are nearby.
+- **Identifying "your" AirPods without an identity.** AirPods rotate a random Bluetooth address every few minutes, so the address cannot tell one pair from another. PodDeck links the two worlds through the product id instead. Windows names each service of a paired Bluetooth device after the vendor and product ids it published when pairing (`…_VID&0001004C_PID&2027…`), and that product id is the same one AirPods put in their advertisements. So PodDeck only follows the models paired with this PC. Among those it follows the pair with the strongest smoothed signal, and it only switches when another pair is clearly closer, so the icon does not flicker.
 - **Platform code kept apart from the logic.** The protocol, the tracking logic and every text the UI shows live in a plain `net10.0` library that is tested on any OS. Only the BLE watcher and the tray UI depend on Windows.
 
 ## How it works
@@ -23,7 +23,8 @@ AirPods ──BLE advertisement──▶ AppleAdvertisementScanner (WinRT watche
                                ProximityPairingParser ──▶ AirPodsStatus (model, L/R/case, in-ear, lid)
                                         │
                                         ▼
-                               AirPodsTracker (nearest pair, hysteresis, expiry after 20 s of silence)
+PairedAirPodsWatcher ──paired ids──▶ AirPodsTracker (paired models only, nearest pair, hysteresis,
+(WinRT device watcher)                  │            expiry after 20 s of silence)
                                         │ CurrentChanged
                                         ▼
                                Tray icon · tooltip · context menu
@@ -39,8 +40,9 @@ AirPods ──BLE advertisement──▶ AppleAdvertisementScanner (WinRT watche
    - in-ear and in-case flags
    - the lid state
 
-3. The tracker runs on the UI thread. It turns the stream of advertisements into a single stable state and raises an event only when something visible changes.
-4. The tray shows the result. The icon's number is the lowest pod's battery: green normally, red under 20 %, and grey when no AirPods are around. The tooltip and menu list every component.
+3. A WinRT `DeviceWatcher` lists the Bluetooth services Apple devices registered when they were paired and hands their product ids to the tracker. Advertisements from any other model are dropped. With no Apple audio device paired, the tracker accepts any nearby pair.
+4. The tracker runs on the UI thread. It turns the stream of advertisements into a single stable state and raises an event only when something visible changes.
+5. The tray shows the result. The icon's number is the lowest pod's battery: green normally, red under 20 %, and grey when no AirPods are around. The tooltip and menu list every component.
 
 PodDeck recognises AirPods 1st–3rd generation, AirPods 4 (with and without ANC), AirPods Pro, AirPods Pro 2 (Lightning and USB-C), AirPods Pro 3 and AirPods Max. Other Apple audio products still show their battery, labelled with their raw product id.
 
@@ -52,9 +54,10 @@ PodDeck/
 │   ├── PodDeck.Core/          # net10.0, no Windows dependency
 │   │   ├── Devices/           # AirPodsModel, BatteryReading, PodStatus, AirPodsStatus
 │   │   ├── Protocol/          # ProximityPairingParser: bytes -> AirPodsStatus
+│   │   ├── Pairing/           # PairedDeviceId: product id from a paired device's instance id
 │   │   ├── Tracking/          # AirPodsTracker + TrackerOptions: picks your pair, expires silent ones
 │   │   └── Presentation/      # StatusFormatter: tooltip, menu lines, icon number
-│   ├── PodDeck.Bluetooth/     # AppleAdvertisementScanner over the WinRT BLE watcher
+│   ├── PodDeck.Bluetooth/     # AppleAdvertisementScanner (BLE) and PairedAirPodsWatcher (paired devices)
 │   ├── PodDeck.App/           # WinForms tray app (PodDeck.exe), single instance
 │   └── PodDeck.Probe/         # console diagnostic that prints every advertisement
 ├── tests/
@@ -101,7 +104,12 @@ Listening for AirPods advertisements for 25 s.
     AirPods Pro 3: L -- | R 70% in ear | case --
 ```
 
-Add `--raw` to also print Apple advertisements that are not proximity pairing messages.
+Add `--raw` to also print Apple advertisements that are not proximity pairing messages. Use `--paired` to list the Apple models paired with this PC, which are the only ones the tray app follows:
+
+```text
+> dotnet run --project src/PodDeck.Probe -- --paired
+0x2027  AirPods Pro 3
+```
 
 ## Proximity pairing message
 
@@ -153,7 +161,8 @@ The build treats warnings as errors and enables the `latest-recommended` .NET an
 - **The icon stays grey with `–`.** Your AirPods are in a closed case or out of range. Open the lid or put one pod in your ear. If it stays grey, run the probe: if it prints nothing, Windows is not receiving the advertisements.
 - **"Bluetooth is off — retrying".** Turn Bluetooth on in Windows settings. PodDeck retries every 10 seconds and recovers on its own.
 - **A pod shows `--`.** That pod is not reporting, usually because it is inside the case while the other one is in use. AirPods only report a pod's battery through whichever pod is broadcasting.
-- **Someone else's AirPods show up.** Advertisements weaker than −90 dBm are ignored, and the closest pair wins. Two pairs of the same model at a similar distance can still be confused, because their addresses are random.
+- **Someone else's AirPods show up.** Only models paired with this PC are followed, and advertisements weaker than −90 dBm are ignored. Someone nearby with the same model can still be confused with yours, because everything else in the advertisement that could tell them apart is encrypted.
+- **Your AirPods never show up but the probe sees them.** Run the probe with `--paired`. If your model is not listed, pair the AirPods with Windows from Bluetooth settings.
 
 ## License
 
