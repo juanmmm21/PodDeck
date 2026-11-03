@@ -125,7 +125,7 @@ Add `--raw` to also print Apple advertisements that are not proximity pairing me
 The bytes below are offsets into Apple's manufacturer data after the company id. Only the first ten bytes are in clear text; the rest is encrypted with a key shared by the paired devices.
 
 - `0`: message type, `0x07`.
-- `1`: length of the rest of the message, `0x19`.
+- `1`: length of the rest of the message, `0x19`. Other Apple devices also send type `0x07` messages with a shorter length (`0x11`) and a different layout, so PodDeck only decodes the `0x19` ones.
 - `3–4`: product id, little-endian. For example `0x2027` is AirPods Pro 3 and `0x2014` is AirPods Pro 2.
 - `5`: status flags:
   - `0x20`: the broadcasting pod is the left one.
@@ -136,7 +136,7 @@ The bytes below are offsets into Apple's manufacturer data after the company id.
   - `0x04`: both pods are in the case.
 - `6`: pod batteries. The low nibble belongs to the broadcasting pod and the high nibble to the other pod. Values `0–10` mean ×10 %, and `0xF` means the pod is not reporting.
 - `7`: charging and case. The high nibble holds charging flags (`0x1` broadcasting pod, `0x2` other pod, `0x4` case). The low nibble is the case battery, encoded like the pods.
-- `8`: lid. `0x08` set means closed; this is only meaningful while a pod is in the case.
+- `8`: lid. `0x08` set means closed; this is only meaningful while a pod is in the case. Confirmed on AirPods Pro 3: `0x31`–`0x33` with the lid open, `0x39`–`0x3B` closed, flipping as soon as the lid moves.
 
 Sources: [furiousMAC/continuity](https://github.com/furiousMAC/continuity), [OpenPods](https://github.com/adolfintel/OpenPods), [AirPodsDesktop](https://github.com/SpriteOvO/AirPodsDesktop).
 
