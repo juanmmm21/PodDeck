@@ -6,7 +6,7 @@
 
 Windows treats AirPods as a generic Bluetooth headset. You can listen to music and take calls, but there is no way to see how much battery each pod or the case has left. On an iPhone that information appears the moment you open the case.
 
-PodDeck brings that information to Windows. It is a small tray app that listens for the Bluetooth Low Energy "proximity pairing" message AirPods broadcast to everything nearby. It decodes the message and shows the battery of the lowest pod as a coloured tray icon. When you open the case, a small card with the battery of each pod and the case pops up above the tray, like the one on an iPhone. Take a pod out of your ear and whatever is playing pauses; put it back and it resumes. When a pod or the case runs low, a Windows notification tells you. Hover over the icon to see every component; right-click it for the details. It needs no driver, no pairing step and no network access.
+PodDeck brings that information to Windows. It is a small tray app that listens for the Bluetooth Low Energy "proximity pairing" message AirPods broadcast to everything nearby. It decodes the message and shows the battery of the lowest pod as a coloured tray icon. When you open the case, a small card with the battery of each pod and the case pops up above the tray, like the one on an iPhone. Take a pod out of your ear and whatever is playing pauses; put it back and it resumes. When a pod or the case runs low, a Windows notification tells you. Hover over the icon to see every component; right-click it for the details and options, which are remembered between runs. It needs no driver, no pairing step and no network access.
 
 ## What makes it interesting
 
@@ -67,12 +67,13 @@ PodDeck/
 │   │   ├── Tracking/          # AirPodsTracker: picks your pair; CaseLidWatcher, EarDetector: lid and ear events
 │   │   ├── Alerts/            # LowBatteryMonitor: when to warn about low battery
 │   │   ├── Playback/          # AutoPausePolicy: when to pause and resume media
+│   │   ├── Settings/          # AppSettings, its JSON format and the startup command
 │   │   └── Presentation/      # StatusFormatter: tooltip, menu lines, icon number, popup gauges
 │   ├── PodDeck.Bluetooth/     # AppleAdvertisementScanner (BLE) and PairedAirPodsWatcher (paired devices)
 │   ├── PodDeck.App/           # WinForms tray app (PodDeck.exe), single instance
 │   └── PodDeck.Probe/         # console diagnostic that prints every advertisement
 ├── tests/
-│   └── PodDeck.Core.Tests/    # xUnit tests for the parser, tracker, lid and ear detection, auto-pause policy, low battery monitor and formatter
+│   └── PodDeck.Core.Tests/    # xUnit tests for the parser, tracker, lid and ear detection, auto-pause policy, low battery monitor, settings and formatter
 ├── Directory.Build.props      # nullable, warnings as errors, recommended analyzers
 └── PodDeck.slnx
 ```
@@ -101,7 +102,10 @@ Run `PodDeck.exe`. It has no window: look for the icon in the notification area.
 - **Case popup:** opening the lid shows the card below for 8 seconds, without taking focus from the app you are using. Closing the lid or clicking the card hides it. Left-click the tray icon to bring it up at any time.
 - **Auto-pause:** taking a pod out of your ear pauses any media playing in Windows; putting it back within five minutes resumes it. Untick **Pause media when an AirPod is removed** in the menu to turn it off.
 - **Low battery alert:** a Windows notification appears when a pod, the case or the headphones drop to 20 % without charging, once per discharge. Pick 10 %, 20 %, 30 % or **Off** under **Low battery alert** in the menu.
-- **Right-click:** model name, then one line per pod with its position (in ear / in case), the case with its lid state, the auto-pause and low battery options, and **Exit**.
+- **Start with Windows:** tick it in the menu to launch PodDeck when you sign in. It adds a `PodDeck` value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` pointing at the current `PodDeck.exe`, so no installer or admin rights are needed, and unticking it removes the value. If you move the executable, tick it again from the new location.
+- **Right-click:** model name, then one line per pod with its position (in ear / in case), the case with its lid state, the auto-pause, low battery and startup options, and **Exit**.
+
+The auto-pause and low battery choices are saved to `%APPDATA%\PodDeck\settings.json`. If that file is missing or unreadable, PodDeck starts with the defaults (auto-pause on, alert at 20 %) and rewrites it the next time you change an option.
 
 AirPods only broadcast while they are out of the case or while the lid is open. After 20 seconds of silence PodDeck reports "No AirPods nearby" until they broadcast again.
 
