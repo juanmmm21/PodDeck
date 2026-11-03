@@ -19,6 +19,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private readonly SynchronizationContext _uiContext;
     private readonly AppleAdvertisementScanner _scanner = new();
+    private readonly PairedAirPodsWatcher _pairedWatcher = new();
     private readonly AirPodsTracker _tracker = new(TimeProvider.System);
     private readonly NotifyIcon _notifyIcon;
     private readonly ContextMenuStrip _menu = new();
@@ -43,12 +44,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         _scanner.AdvertisementReceived += OnAdvertisementReceived;
         _scanner.Stopped += OnScannerStopped;
+        _pairedWatcher.PairedProductsChanged += OnPairedProductsChanged;
         _tracker.CurrentChanged += (_, _) => Render();
 
         _housekeepingTimer.Interval = (int)HousekeepingInterval.TotalMilliseconds;
         _housekeepingTimer.Tick += (_, _) => Housekeep();
         _housekeepingTimer.Start();
 
+        TryStartPairedWatcher();
         TryStartScanner();
         Render();
     }
@@ -61,6 +64,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _scanner.AdvertisementReceived -= OnAdvertisementReceived;
             _scanner.Stopped -= OnScannerStopped;
             _scanner.Dispose();
+            _pairedWatcher.PairedProductsChanged -= OnPairedProductsChanged;
+            _pairedWatcher.Dispose();
             _notifyIcon.Visible = false;
             _notifyIcon.Dispose();
             _menu.Dispose();
@@ -78,6 +83,22 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             short signal = advertisement.SignalStrengthDbm;
             _uiContext.Post(_ => _tracker.Report(status, signal), null);
+        }
+    }
+
+    private void OnPairedProductsChanged(object? sender, IReadOnlySet<ushort> productIds) =>
+        _uiContext.Post(_ => _tracker.SetPairedProducts(productIds), null);
+
+    private void TryStartPairedWatcher()
+    {
+        try
+        {
+            _pairedWatcher.Start();
+        }
+        catch (Exception exception) when (exception is COMException or InvalidOperationException or UnauthorizedAccessException)
+        {
+            // Sin la lista de emparejados la app sigue funcionando con el par más cercano, como antes.
+            System.Diagnostics.Trace.TraceWarning($"Paired device watcher failed to start: {exception.Message}");
         }
     }
 
