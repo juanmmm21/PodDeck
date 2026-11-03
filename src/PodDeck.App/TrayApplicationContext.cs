@@ -5,6 +5,7 @@ using PodDeck.Core.Devices;
 using PodDeck.Core.Playback;
 using PodDeck.Core.Presentation;
 using PodDeck.Core.Protocol;
+using PodDeck.Core.Settings;
 using PodDeck.Core.Tracking;
 using Windows.Devices.Bluetooth;
 
@@ -15,7 +16,7 @@ namespace PodDeck.App;
 /// tuyos y refresca icono, tooltip y menú cuando cambia algo. Al abrir el estuche saca la ventanita
 /// con la batería, que también se abre con un clic en el icono. Al quitarse un auricular pausa lo que
 /// suene y lo reanuda al volver a ponérselo, y avisa con una notificación cuando la batería baja del
-/// umbral elegido en el menú.
+/// umbral elegido en el menú. Lo elegido en el menú se guarda y puede arrancar con Windows.
 /// </summary>
 internal sealed class TrayApplicationContext : ApplicationContext
 {
@@ -33,33 +34,43 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly AutoPausePolicy _autoPause = new(TimeProvider.System);
     private readonly MediaPlaybackController _media = new();
     private readonly LowBatteryMonitor _lowBattery = new();
+    private readonly SettingsStore _settingsStore = new();
+    private readonly StartupRegistration _startup = new();
     private readonly CasePopupForm _popup = new();
     private readonly NotifyIcon _notifyIcon;
     private readonly ContextMenuStrip _menu = new();
     private readonly ToolStripMenuItem _titleItem = new() { Enabled = false };
     private readonly ToolStripSeparator _detailsSeparator = new();
-    private readonly ToolStripMenuItem _autoPauseItem = new("Pause media when an AirPod is removed")
-    {
-        CheckOnClick = true,
-        Checked = true,
-    };
+    private readonly ToolStripMenuItem _autoPauseItem = new("Pause media when an AirPod is removed") { CheckOnClick = true };
     private readonly ToolStripMenuItem _lowBatteryMenu = new("Low battery alert");
+    private readonly ToolStripMenuItem _startupItem = new("Start with Windows");
     private readonly List<ToolStripMenuItem> _detailItems = [];
     private readonly System.Windows.Forms.Timer _housekeepingTimer = new();
     private Icon? _currentIcon;
     private string? _scannerProblem;
     private DateTimeOffset _nextRestartAttempt = DateTimeOffset.MinValue;
+    private AppSettings _settings;
 
     public TrayApplicationContext()
     {
         _uiContext = SynchronizationContext.Current
             ?? throw new InvalidOperationException("The tray context must be created on the WinForms UI thread.");
 
+        _settings = _settingsStore.Load();
+        _autoPause.IsEnabled = _settings.AutoPauseEnabled;
+        _autoPauseItem.Checked = _settings.AutoPauseEnabled;
+        ApplyLowBatteryThreshold(_settings.LowBatteryThresholdPercent);
+
         _menu.Items.Add(_titleItem);
         _menu.Items.Add(_detailsSeparator);
         _menu.Items.Add(_autoPauseItem);
         BuildLowBatteryMenu();
         _menu.Items.Add(_lowBatteryMenu);
+        _startupItem.Enabled = _startup.IsAvailable;
+        _startupItem.Checked = _startup.IsEnabled();
+        _startupItem.Click += OnStartupClicked;
+        _menu.Items.Add(_startupItem);
+        _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add(new ToolStripMenuItem("Exit", image: null, (_, _) => ExitThread()));
 
         _notifyIcon = new NotifyIcon { ContextMenuStrip = _menu, Visible = true };
@@ -106,6 +117,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _notifyIcon.MouseClick -= OnNotifyIconClick;
             _autoPauseItem.CheckedChanged -= OnAutoPauseToggled;
             _lowBatteryMenu.DropDownItemClicked -= OnLowBatteryChoiceClicked;
+            _startupItem.Click -= OnStartupClicked;
             _notifyIcon.Visible = false;
             _notifyIcon.Dispose();
             _menu.Dispose();
@@ -270,14 +282,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private void BuildLowBatteryMenu()
     {
-        var off = new ToolStripMenuItem("Off") { Tag = 0 };
+        var off = new ToolStripMenuItem("Off") { Tag = AppSettings.LowBatteryOff, Checked = !_lowBattery.IsEnabled };
         _lowBatteryMenu.DropDownItems.Add(off);
         foreach (int threshold in LowBatteryMonitor.ThresholdChoices)
         {
             _lowBatteryMenu.DropDownItems.Add(new ToolStripMenuItem($"At {threshold}%")
             {
                 Tag = threshold,
-                Checked = threshold == _lowBattery.ThresholdPercent,
+                Checked = _lowBattery.IsEnabled && threshold == _lowBattery.ThresholdPercent,
             });
         }
 
@@ -291,12 +303,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
-        _lowBattery.IsEnabled = threshold > 0;
-        if (threshold > 0)
-        {
-            _lowBattery.ThresholdPercent = threshold;
-        }
-
+        ApplyLowBatteryThreshold(threshold);
+        SaveSettings(_settings with { LowBatteryThresholdPercent = threshold });
         foreach (ToolStripMenuItem item in _lowBatteryMenu.DropDownItems.OfType<ToolStripMenuItem>())
         {
             item.Checked = ReferenceEquals(item, e.ClickedItem);
@@ -305,12 +313,44 @@ internal sealed class TrayApplicationContext : ApplicationContext
         WarnIfLow(_tracker.Current);
     }
 
+    private void ApplyLowBatteryThreshold(int threshold)
+    {
+        _lowBattery.IsEnabled = threshold != AppSettings.LowBatteryOff;
+        if (_lowBattery.IsEnabled)
+        {
+            _lowBattery.ThresholdPercent = threshold;
+        }
+    }
+
     private void OnAutoPauseToggled(object? sender, EventArgs e)
     {
         _autoPause.IsEnabled = _autoPauseItem.Checked;
         if (!_autoPauseItem.Checked)
         {
             _media.Forget();
+        }
+
+        SaveSettings(_settings with { AutoPauseEnabled = _autoPauseItem.Checked });
+    }
+
+    private void SaveSettings(AppSettings settings)
+    {
+        _settings = settings;
+        // Si no se puede guardar, el cambio sigue valiendo hasta que se cierre la app.
+        _ = _settingsStore.TrySave(settings);
+    }
+
+    private void OnStartupClicked(object? sender, EventArgs e)
+    {
+        bool wanted = !_startupItem.Checked;
+        if (_startup.TrySet(wanted))
+        {
+            _startupItem.Checked = _startup.IsEnabled();
+        }
+        else
+        {
+            _notifyIcon.ShowBalloonTip(LowBatteryNotificationMilliseconds, "PodDeck",
+                "Windows did not let PodDeck change its startup entry.", ToolTipIcon.Error);
         }
     }
 
