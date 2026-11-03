@@ -49,7 +49,7 @@ public static class StatusFormatter
         ArgumentNullException.ThrowIfNull(status);
         if (status.Model.IsHeadphones())
         {
-            return [new BatteryGauge("Battery", HeadphonesReading(status))];
+            return [new BatteryGauge("Battery", status.HeadphonesBattery)];
         }
 
         return
@@ -64,15 +64,11 @@ public static class StatusFormatter
     public static int? IconPercent(AirPodsStatus? status) => status switch
     {
         null => null,
-        { Model: var model } when model.IsHeadphones() => HeadphonesReading(status).Percent,
+        { Model: var model } when model.IsHeadphones() => status.HeadphonesBattery.Percent,
         _ => status.LowestPodPercent,
     };
 
-    // Los cascos solo informan por uno de los dos nibbles, y cuál depende del lado «primario».
-    private static BatteryReading HeadphonesReading(AirPodsStatus status) =>
-        status.Left.Battery.IsAvailable ? status.Left.Battery : status.Right.Battery;
-
-    private static string HeadphonesBattery(AirPodsStatus status) => Long(HeadphonesReading(status));
+    private static string HeadphonesBattery(AirPodsStatus status) => Long(status.HeadphonesBattery);
 
     private static string Pod(PodStatus pod)
     {

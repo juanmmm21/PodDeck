@@ -19,6 +19,12 @@ public sealed record AirPodsStatus(
         }
     }
 
+    /// <summary>
+    /// Batería única de unos cascos (AirPods Max). Solo informan por uno de los dos nibbles, y cuál
+    /// depende del lado «primario».
+    /// </summary>
+    public BatteryReading HeadphonesBattery => Left.Battery.IsAvailable ? Left.Battery : Right.Battery;
+
     public string DisplayName => Model == AirPodsModel.Unknown
         ? $"{Model.DisplayName()} (product 0x{ProductId:X4})"
         : Model.DisplayName();
