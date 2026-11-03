@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using PodDeck.Bluetooth;
+using PodDeck.Core.Alerts;
 using PodDeck.Core.Devices;
 using PodDeck.Core.Playback;
 using PodDeck.Core.Presentation;
@@ -13,13 +14,15 @@ namespace PodDeck.App;
 /// La app entera vive en el icono de la bandeja: escucha los anuncios, decide qué AirPods son los
 /// tuyos y refresca icono, tooltip y menú cuando cambia algo. Al abrir el estuche saca la ventanita
 /// con la batería, que también se abre con un clic en el icono. Al quitarse un auricular pausa lo que
-/// suene y lo reanuda al volver a ponérselo.
+/// suene y lo reanuda al volver a ponérselo, y avisa con una notificación cuando la batería baja del
+/// umbral elegido en el menú.
 /// </summary>
 internal sealed class TrayApplicationContext : ApplicationContext
 {
     // Corto porque el cierre de la tapa se confirma con el paso del tiempo y la ventana debe irse al momento.
     private static readonly TimeSpan HousekeepingInterval = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan RestartDelay = TimeSpan.FromSeconds(10);
+    private const int LowBatteryNotificationMilliseconds = 10_000;
 
     private readonly SynchronizationContext _uiContext;
     private readonly AppleAdvertisementScanner _scanner = new();
@@ -29,6 +32,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly EarDetector _earDetector = new();
     private readonly AutoPausePolicy _autoPause = new(TimeProvider.System);
     private readonly MediaPlaybackController _media = new();
+    private readonly LowBatteryMonitor _lowBattery = new();
     private readonly CasePopupForm _popup = new();
     private readonly NotifyIcon _notifyIcon;
     private readonly ContextMenuStrip _menu = new();
@@ -39,6 +43,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         CheckOnClick = true,
         Checked = true,
     };
+    private readonly ToolStripMenuItem _lowBatteryMenu = new("Low battery alert");
     private readonly List<ToolStripMenuItem> _detailItems = [];
     private readonly System.Windows.Forms.Timer _housekeepingTimer = new();
     private Icon? _currentIcon;
@@ -53,6 +58,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _menu.Items.Add(_titleItem);
         _menu.Items.Add(_detailsSeparator);
         _menu.Items.Add(_autoPauseItem);
+        BuildLowBatteryMenu();
+        _menu.Items.Add(_lowBatteryMenu);
         _menu.Items.Add(new ToolStripMenuItem("Exit", image: null, (_, _) => ExitThread()));
 
         _notifyIcon = new NotifyIcon { ContextMenuStrip = _menu, Visible = true };
@@ -66,6 +73,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             Render();
             FollowLid(status);
+            WarnIfLow(status);
             if (status is null)
             {
                 _earDetector.Reset();
@@ -97,6 +105,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _popup.Dispose();
             _notifyIcon.MouseClick -= OnNotifyIconClick;
             _autoPauseItem.CheckedChanged -= OnAutoPauseToggled;
+            _lowBatteryMenu.DropDownItemClicked -= OnLowBatteryChoiceClicked;
             _notifyIcon.Visible = false;
             _notifyIcon.Dispose();
             _menu.Dispose();
@@ -246,6 +255,54 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             System.Diagnostics.Trace.TraceWarning($"Could not resume media: {exception.Message}");
         }
+    }
+
+    private void WarnIfLow(AirPodsStatus? status)
+    {
+        IReadOnlyList<LowBatteryAlert> alerts = _lowBattery.Update(status);
+        if (status is not null && alerts.Count > 0)
+        {
+            // En Windows 10 y 11 el globo del icono de bandeja se muestra como notificación del sistema.
+            _notifyIcon.ShowBalloonTip(LowBatteryNotificationMilliseconds, StatusFormatter.LowBatteryTitle(status),
+                StatusFormatter.LowBatteryText(alerts), ToolTipIcon.Warning);
+        }
+    }
+
+    private void BuildLowBatteryMenu()
+    {
+        var off = new ToolStripMenuItem("Off") { Tag = 0 };
+        _lowBatteryMenu.DropDownItems.Add(off);
+        foreach (int threshold in LowBatteryMonitor.ThresholdChoices)
+        {
+            _lowBatteryMenu.DropDownItems.Add(new ToolStripMenuItem($"At {threshold}%")
+            {
+                Tag = threshold,
+                Checked = threshold == _lowBattery.ThresholdPercent,
+            });
+        }
+
+        _lowBatteryMenu.DropDownItemClicked += OnLowBatteryChoiceClicked;
+    }
+
+    private void OnLowBatteryChoiceClicked(object? sender, ToolStripItemClickedEventArgs e)
+    {
+        if (e.ClickedItem?.Tag is not int threshold)
+        {
+            return;
+        }
+
+        _lowBattery.IsEnabled = threshold > 0;
+        if (threshold > 0)
+        {
+            _lowBattery.ThresholdPercent = threshold;
+        }
+
+        foreach (ToolStripMenuItem item in _lowBatteryMenu.DropDownItems.OfType<ToolStripMenuItem>())
+        {
+            item.Checked = ReferenceEquals(item, e.ClickedItem);
+        }
+
+        WarnIfLow(_tracker.Current);
     }
 
     private void OnAutoPauseToggled(object? sender, EventArgs e)

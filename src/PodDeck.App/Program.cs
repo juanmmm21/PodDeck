@@ -1,4 +1,6 @@
+using PodDeck.Core.Alerts;
 using PodDeck.Core.Devices;
+using PodDeck.Core.Presentation;
 
 namespace PodDeck.App;
 
@@ -32,6 +34,23 @@ internal static class Program
             };
             preview.ShowStatus(PreviewStatus);
             Application.Run();
+            return 0;
+        }
+
+        // Lanza el aviso de batería baja con datos de ejemplo y sale: sirve para revisarlo a ojo.
+        if (args.Contains("--preview-alert"))
+        {
+            ApplicationConfiguration.Initialize();
+            using Icon batteryIcon = BatteryIconRenderer.Render(10, SystemInformation.SmallIconSize);
+            using var icon = new NotifyIcon { Icon = batteryIcon, Visible = true };
+            icon.ShowBalloonTip(10_000, StatusFormatter.LowBatteryTitle(PreviewStatus),
+                StatusFormatter.LowBatteryText([new LowBatteryAlert(BatteryComponent.Left, 10), new LowBatteryAlert(BatteryComponent.Case, 20)]),
+                ToolTipIcon.Warning);
+            using var exitTimer = new System.Windows.Forms.Timer { Interval = 12_000 };
+            exitTimer.Tick += (_, _) => Application.ExitThread();
+            exitTimer.Start();
+            Application.Run();
+            icon.Visible = false;
             return 0;
         }
 
