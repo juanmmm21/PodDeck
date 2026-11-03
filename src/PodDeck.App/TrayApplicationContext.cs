@@ -10,7 +10,8 @@ namespace PodDeck.App;
 
 /// <summary>
 /// La app entera vive en el icono de la bandeja: escucha los anuncios, decide qué AirPods son los
-/// tuyos y refresca icono, tooltip y menú cuando cambia algo.
+/// tuyos y refresca icono, tooltip y menú cuando cambia algo. Al abrir el estuche saca la ventanita
+/// con la batería, que también se abre con un clic en el icono.
 /// </summary>
 internal sealed class TrayApplicationContext : ApplicationContext
 {
@@ -21,6 +22,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly AppleAdvertisementScanner _scanner = new();
     private readonly PairedAirPodsWatcher _pairedWatcher = new();
     private readonly AirPodsTracker _tracker = new(TimeProvider.System);
+    private readonly CaseLidWatcher _lidWatcher = new(TimeProvider.System);
+    private readonly CasePopupForm _popup = new();
     private readonly NotifyIcon _notifyIcon;
     private readonly ContextMenuStrip _menu = new();
     private readonly ToolStripMenuItem _titleItem = new() { Enabled = false };
@@ -41,11 +44,16 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _menu.Items.Add(new ToolStripMenuItem("Exit", image: null, (_, _) => ExitThread()));
 
         _notifyIcon = new NotifyIcon { ContextMenuStrip = _menu, Visible = true };
+        _notifyIcon.MouseClick += OnNotifyIconClick;
 
         _scanner.AdvertisementReceived += OnAdvertisementReceived;
         _scanner.Stopped += OnScannerStopped;
         _pairedWatcher.PairedProductsChanged += OnPairedProductsChanged;
-        _tracker.CurrentChanged += (_, _) => Render();
+        _tracker.CurrentChanged += (_, status) =>
+        {
+            Render();
+            FollowLid(status);
+        };
 
         _housekeepingTimer.Interval = (int)HousekeepingInterval.TotalMilliseconds;
         _housekeepingTimer.Tick += (_, _) => Housekeep();
@@ -66,6 +74,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _scanner.Dispose();
             _pairedWatcher.PairedProductsChanged -= OnPairedProductsChanged;
             _pairedWatcher.Dispose();
+            _popup.Dispose();
+            _notifyIcon.MouseClick -= OnNotifyIconClick;
             _notifyIcon.Visible = false;
             _notifyIcon.Dispose();
             _menu.Dispose();
@@ -120,6 +130,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private void Housekeep()
     {
         _tracker.ExpireStale();
+        // El cierre de la tapa se confirma con el tiempo, aunque el tracker no cambie.
+        FollowLid(_tracker.Current);
         if (_scannerProblem is not null && DateTimeOffset.UtcNow >= _nextRestartAttempt)
         {
             TryStartScanner();
@@ -140,6 +152,34 @@ internal sealed class TrayApplicationContext : ApplicationContext
             // porque el usuario puede encenderlo en cualquier momento.
             _scannerProblem = "Bluetooth unavailable — retrying";
             _nextRestartAttempt = DateTimeOffset.UtcNow + RestartDelay;
+        }
+    }
+
+    private void FollowLid(AirPodsStatus? status)
+    {
+        switch (_lidWatcher.Update(status))
+        {
+            case LidChange.Opened when status is not null:
+                _popup.ShowStatus(status);
+                break;
+            case LidChange.Closed:
+                _popup.Hide();
+                break;
+            default:
+                if (status is not null)
+                {
+                    _popup.UpdateStatus(status);
+                }
+
+                break;
+        }
+    }
+
+    private void OnNotifyIconClick(object? sender, MouseEventArgs e)
+    {
+        if (e.Button == MouseButtons.Left && _tracker.Current is AirPodsStatus status)
+        {
+            _popup.ShowStatus(status);
         }
     }
 
