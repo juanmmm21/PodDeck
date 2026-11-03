@@ -41,13 +41,36 @@ public sealed class AutoPausePolicyTests
         Assert.Equal(PlaybackAction.None, _policy.Decide(new EarChange(1, 2)));
     }
 
+    // Juan, 2026-11-03: con un solo auricular puesto, quitárselo no paraba la música. Venía de haber
+    // pausado al quitarse el otro y haber vuelto a darle a reproducir a mano.
     [Fact]
-    public void Decide_SecondRemovalWhilePaused_DoesNotPauseAgain()
+    public void Decide_SecondRemovalWhilePaused_PausesAgain()
     {
         _policy.Decide(new EarChange(2, 1));
         _policy.ConfirmPaused();
 
-        Assert.Equal(PlaybackAction.None, _policy.Decide(new EarChange(1, 0)));
+        Assert.Equal(PlaybackAction.Pause, _policy.Decide(new EarChange(1, 0)));
+    }
+
+    [Fact]
+    public void Decide_SecondRemovalWhilePaused_KeepsOriginalResumeTarget()
+    {
+        _policy.Decide(new EarChange(2, 1));
+        _policy.ConfirmPaused();
+        _policy.Decide(new EarChange(1, 0));
+        _policy.ConfirmPaused();
+
+        Assert.Equal(PlaybackAction.None, _policy.Decide(new EarChange(0, 1)));
+        Assert.Equal(PlaybackAction.Resume, _policy.Decide(new EarChange(1, 2)));
+    }
+
+    [Fact]
+    public void Decide_OnlyPodRemoved_PausesAndResumesWhenPutBack()
+    {
+        Assert.Equal(PlaybackAction.Pause, _policy.Decide(new EarChange(1, 0)));
+        _policy.ConfirmPaused();
+
+        Assert.Equal(PlaybackAction.Resume, _policy.Decide(new EarChange(0, 1)));
     }
 
     [Fact]

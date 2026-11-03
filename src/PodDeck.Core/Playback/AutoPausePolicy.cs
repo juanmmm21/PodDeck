@@ -67,14 +67,15 @@ public sealed class AutoPausePolicy
 
         if (change.IsRemoval)
         {
-            // Quitarse el segundo auricular con la música ya pausada no cambia a qué hay que volver.
-            if (HasPendingResume)
+            // Cada vez que se quita uno se pausa, aunque PodDeck ya hubiera pausado antes: si le diste
+            // a reproducir con un solo auricular puesto, quitártelo también debe pararla. Lo que no
+            // cambia es a cuántos auriculares hay que volver para reanudar.
+            if (!HasPendingResume)
             {
-                return PlaybackAction.None;
+                _countBeforePause = change.Before;
+                _pausedAt = null;
             }
 
-            _countBeforePause = change.Before;
-            _pausedAt = null;
             return PlaybackAction.Pause;
         }
 
